@@ -1,31 +1,29 @@
 'use strict';
 const express = require('express');
 const http = require('http');
+const Storage = require('@google-cloud/storage');
+const fs = require('fs');
+
 const app = express();
 
-let g_cachedContent = null;
-let g_cachedTime = null;
+const g_url = 'http://rss.nytimes.com/services/xml/rss/nyt/Arts.xml';
 let g_requesters = null;
 
-function getCacheAgeInHours() {
-	return ((new Date()) - g_cachedTime) / 3600000;
-}
-
-function downloadFile(callback) {
+function downloadXml(requester) {
   if (g_requesters != null) {
-	// If a download is already pending, just add the callback to the list
-	// of requesters. Once the download is complete, all the callbacks in the
-	// g_requesters array will be called.
-	g_requesters.push(callback);
-	console.log("Adding to requester list");
+    // If a download is already pending, just add the requester to the list
+    // of requesters. Once the download is complete, all the callbacks in the
+    // g_requesters array will be called.
+    g_requesters.push(requester);
+    console.log("Adding to requester list");
   }
   else {
-	// Nothing is being downloaded at the moment. Reset the g_requesters array
-	// and push the first callback
+    // Nothing is being downloaded at the moment. Reset the g_requesters array
+    // and push the first requester
     g_requesters = [];
-	g_requesters.push(callback);
+    g_requesters.push(requester);
 
-    http.get('http://rss.nytimes.com/services/xml/rss/nyt/Arts.xml', (resp) => {
+    http.get(g_url, (resp) => {
       let data = '';
       // A chunk of data has been recieved.
       resp.on('data', (chunk) => {
@@ -33,11 +31,11 @@ function downloadFile(callback) {
       });
       // The whole response has been received.
       resp.on('end', () => {
-	    for (let idx in g_requesters) {
+        for (let idx in g_requesters) {
           g_requesters[idx](data);
-		}
+        }
 
-		g_requesters = null;
+        g_requesters = null;
       });
     }).on("error", (err) => {
       console.log("Error: " + err.message);
@@ -45,26 +43,55 @@ function downloadFile(callback) {
   }
 }
 
-function sendResponseToClient(res, data) {
-  res.setHeader('Content-Type', 'text/xml');
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.status(200).send(data);
+function saveXmlToDisk(data, callback) {
+  const g_filename = "Arts.xml";
+
+  fs.writeFile(g_filename, data, (err) => {
+    if (err) {
+      console.log("Error saving file " + g_filename);
+      return;
+    }
+
+    callback(g_filename);
+  });
 }
 
-app.get('/Arts.xml', (req, res) => {
-  if (g_cachedTime && getCacheAgeInHours() < 3.0) {
-    sendResponseToClient(res, g_cachedContent);
-  }
-  else {
-    g_cachedTime = null;
-	g_cachedContent = null;
+function uploadFile(filename) {
+  const storage = Storage();
 
-    downloadFile((data) => {
-      g_cachedContent = data;
-	  g_cachedTime = new Date();
-      sendResponseToClient(res, data);
+  storage
+      .bucket("nyt-rss-feed-storage")
+      .upload(filename)
+      .then(() => {
+    console.log("Uploaded file " + filename);
+
+    storage
+        .bucket("nyt-rss-feed-storage")
+        .file(filename)
+        .makePublic()
+        .then(() => {
+        console.log("Made '" + filename + "' publicly available");
+    }).catch(err => {
+        console.log("Failed to make file public!");
     });
-  }
+
+  }).catch(err => {
+    console.log("Failed to upload file " + filename);
+  });
+}
+
+
+function mainFunc() {
+  downloadXml((data) => {
+    saveXmlToDisk(data, (filename) => {
+      uploadFile(filename);
+    });
+  });
+}
+
+app.get('/launch', (req, res) => {
+  mainFunc();
+  res.status(200).send('done');
 });
 
 if (module === require.main) {
@@ -74,5 +101,6 @@ if (module === require.main) {
     console.log(`App listening on port ${port}`);
   });
 }
+
 module.exports = app;
 
