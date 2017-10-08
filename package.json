@@ -1,0 +1,16 @@
+{
+  "name": "nyt-iq-art",
+  "version": "1.0.0",
+  "description": "New York Times IQ Art",
+  "main": "app.js",
+  "scripts": {
+	"start": "node app.js",
+	"deploy": "gcloud app deploy",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Tanvir Haider",
+  "license": "ISC",
+  "dependencies": {
+    "express": "~4.15.2"
+  }
+}
